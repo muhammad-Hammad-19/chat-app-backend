@@ -13,49 +13,55 @@ import { getSmartReplies } from "./controllers/ai.controllers.js";
 dotenv.config();
 
 const app = express();
-const server = createServer(app); // HTTP server
+const server = createServer(app);
 
+// Allowed Origins
+const allowedOrigins = [
+  "http://localhost:5173", // Local frontend
+  "https://chat-app-frontend-with-socket-2sq1uqdnq.vercel.app", // Production frontend
+];
+
+// Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: process?.env?.CLIENT_URL,
+    origin: allowedOrigins,
     credentials: true,
   },
 });
 
-// Middleware
+// Express Middleware
 app.use(
   cors({
-    origin: process?.env?.CLIENT_URL,
+    origin: allowedOrigins,
     credentials: true,
-  }),
+  })
 );
 
 app.use(express.json());
 app.use(cookieParser());
 
 // Test Route
-
 app.get("/", (req, res) => {
   res.send("API is running 🚀");
 });
 
+// Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/messages", messagesRoutes);
 
-// DB Connect
+// Connect Database
+connectDB();
 
-// Socket Connection
-const users = {}; // { userId: socket.id }
+// Socket Users
+const users = {};
 
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // ✅ Step 1: Register user
   socket.on("register", (userId) => {
     users[userId] = socket.id;
-
-    io.emit("register", users); // send to everyone
+    io.emit("register", users);
   });
 
   socket.on("typing", (data) => {
@@ -75,18 +81,17 @@ io.on("connection", (socket) => {
   });
 
   socket.on("chat-message", async (data) => {
-    const { from, to, message } = data;
+    const { to, message } = data;
 
     const targetSocketId = users[to];
 
-    // send to receiver
     if (targetSocketId) {
       io.to(targetSocketId).emit("chat-message", data);
     }
 
     socket.emit("chat-message", data);
 
-    if (message && message.trim().length > 0) {
+    if (message?.trim()) {
       try {
         const aiResponse = await getSmartReplies(message);
 
@@ -94,27 +99,26 @@ io.on("connection", (socket) => {
           io.to(targetSocketId).emit("ai-suggestions", aiResponse);
         }
       } catch (error) {
-        console.error("AI error:", error);
+        console.error("AI Error:", error);
       }
     }
   });
 
-  // ✅ Step 3: Remove user on disconnect
   socket.on("disconnect", () => {
-    // console.log("User disconnected:", socket.id);
+    console.log("User disconnected:", socket.id);
 
-    for (let userId in users) {
+    for (const userId in users) {
       if (users[userId] === socket.id) {
         delete users[userId];
         break;
       }
     }
+
+    io.emit("register", users);
   });
 });
 
-connectDB();
-
-// Port
+// Local Development
 const PORT = process.env.PORT || 5000;
 
 if (process.env.NODE_ENV !== "production") {
